@@ -6,9 +6,9 @@ use axum::{body::Body, http::Request, response::Response};
 use core::panic;
 use futures::lock::Mutex;
 use futures::{Future, FutureExt};
+use garde::Validate;
 use http::HeaderMap;
-use reqwest::Client;
-use secrecy::{ExposeSecret, SecretString};
+use regex::RegexSet;
 use serde::Serialize;
 use time::format_description::well_known::iso8601::{self, TimePrecision};
 use time::format_description::well_known::Iso8601;
@@ -19,9 +19,10 @@ use tracing::Instrument;
 use url::Url;
 use uuid::Uuid;
 
-use crate::config::Config;
+use crate::api_calls::{create_session, post_requests, touch_session};
+use crate::config::{get_full_url, Config};
 use crate::extension::SiteTraceExt;
-use crate::utils::{LOG_REQUEST_PATH, PROLONG_PATH};
+use crate::utils::{HttpMethod, PROLONG_PATH};
 use crate::{CookieConfig, SendRequestStrategy};
 
 const SIMPLE_ISO: Iso8601<6651332276402088934156738804825718784> = Iso8601::<
@@ -37,23 +38,36 @@ const SIMPLE_ISO: Iso8601<6651332276402088934156738804825718784> = Iso8601::<
 time::serde::format_description!(iso_format, OffsetDateTime, SIMPLE_ISO);
 
 #[derive(Debug, Clone, Serialize)]
+pub(crate) struct CreateSessionRequest<'a> {
+    ip: &'a Option<String>,
+    hostname: &'a Option<String>,
+    user_agent: &'a Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Validate)]
+#[garde(allow_unvalidated)]
 pub(crate) struct RequestData {
     #[serde(with = "iso_format")]
     created_at: OffsetDateTime,
     path: String,
-    method: String,
-    response_time: u32,
+    method: HttpMethod,
+    response_time_ms: u32,
     status: u16,
+    #[garde(inner(length(max = 100)))]
     hostname: Option<String>,
     ip_address: Option<String>,
+    #[garde(inner(length(max = 100)))]
     user_agent: Option<String>,
+    #[garde(inner(length(max = 100)))]
     user_id: Option<String>,
     session_uuid: Option<Uuid>,
+    #[garde(inner(length(max = 1000)))]
+    full_url: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Validate)]
 pub(crate) struct RequestsPayload {
-    api_key: String,
+    #[garde(length(min = 1, max = 5000))]
     requests: Vec<RequestData>,
 }
 
@@ -71,22 +85,47 @@ pub fn last_posted_static() -> &'static Mutex<Instant> {
 /// If 'cookie' field is found in request headers, cookies are considered allowed.
 #[derive(Clone)]
 pub struct SiteTraceLayer<ST = ()> {
-    api_key: SecretString,
     config: Config<ST>,
     app_state: Option<ST>,
 }
 
-impl<ST> SiteTraceLayer<ST> {
+pub struct SiteTraceLayerBuilder<'a, ST = ()> {
+    config: Config<ST>,
+    app_state: Option<ST>,
+    ignore_paths: Vec<&'a str>,
+}
+
+impl<'a, ST> SiteTraceLayerBuilder<'a, ST> {
     /// Creates a new instance of `SiteTraceLayer`.
     ///
-    /// This function takes an API key and a closure (`fut`) that allows you to define how to handle
+    /// This function takes an API key to start constructing `SiteTraceLayer`.
+    ///
+    /// # Parameters
+    ///
+    /// - `api_key`: A `String` representing the API key that will be used for making requests.
+    ///
+    /// # Returns
+    ///
+    /// Returns an instance of `SiteTraceLayerBuilder` configured with the provided API key.
+    pub fn new(api_key: String) -> Self {
+        let mut config = Config::default();
+        config.api_key = api_key.into();
+        Self {
+            config,
+            app_state: None,
+            ignore_paths: Vec::new(),
+        }
+    }
+
+    /// Build a new instance of `SiteTraceLayer`.
+    ///
+    /// This function takes a closure (`fut`) that allows you to define how to handle
     /// a background asynchronous task. The closure is called with a future that resolves to a
     /// `reqwest::Response` or an error. This enables integration with the asynchronous environment,
     /// avoiding blocking the response while processing the request in the background.
     ///
     /// # Parameters
     ///
-    /// - `api_key`: A `String` representing the API key that will be used for making requests.
     /// - `fut`: A closure that takes a pinned future as an argument and returns `()`.
     ///
     /// # Returns
@@ -96,32 +135,37 @@ impl<ST> SiteTraceLayer<ST> {
     ///
     /// # Example
     ///
-    /// Here's how to use the `new` function to create a `SiteTraceLayer` that spawns a background
+    /// Here's how to use the `build_with_exec` function to create a `SiteTraceLayer` that spawns a background
     /// task to handle a request asynchronously without blocking the response:
     ///
     /// ```rust
     /// use sitetrace-axum::SiteTraceLayer;
     ///
-    /// let layer: SiteTraceLayer() =
-    ///     SiteTraceLayer::new("apikey".to_owned(), |fut| {
-    ///         tokio::spawn(async move {
-    ///             match fut.await {
-    ///                 Ok(r) = {
-    ///                     dbg!(r);
+    /// let layer: SiteTraceLayer<()> =
+    ///     SiteTraceLayerBuilder::new("apikey".to_owned())
+    ///         .build_with_exec(|fut| {
+    ///             tokio::spawn(async move {
+    ///                 match fut.await {
+    ///                     Ok(r) = {
+    ///                         dbg!(r);
+    ///                     }
+    ///                     Err(e) = {
+    ///                         tracing::error!(
+    ///                             "Failed to send api call to sitetrace: {e}"
+    ///                         );
+    ///                     }
     ///                 }
-    ///                 Err(e) = {
-    ///                     tracing::error!(
-    ///                         "Failed to send api call to sitetrace: {e}"
-    ///                     );
-    ///                 }
-    ///             }
-    ///         });
-    ///     });
+    ///            });
+    ///         })
+    ///         .unwrap();
     /// ```
     ///
     /// In this example, the `fut` future is awaited in a Tokia task, allowing the middleware
     /// to return response while handling the result of the api call response in the background.
-    pub fn new<F>(api_key: String, fut: F) -> Self
+    pub fn build_with_exec<F>(
+        mut self,
+        fut: F,
+    ) -> Result<SiteTraceLayer<ST>, regex::Error>
     where
         F: Fn(
                 Pin<
@@ -142,14 +186,14 @@ impl<ST> SiteTraceLayer<ST> {
             + 'static,
         ST: Send + 'static,
     {
-        let mut config = Config::default();
-        config.exec = Arc::new(Box::new(fut));
+        self.config.exec = Arc::new(Box::new(fut));
+        let regex_set = RegexSet::new(self.ignore_paths)?;
+        self.config.ignore_paths = regex_set;
 
-        Self {
-            api_key: api_key.into(),
-            config,
-            app_state: None,
-        }
+        Ok(SiteTraceLayer {
+            config: self.config,
+            app_state: self.app_state,
+        })
     }
 
     /// Assigns the application state to the `SiteTraceLayer`.
@@ -261,11 +305,12 @@ impl<ST> SiteTraceLayer<ST> {
     /// Adds a path to the ignore list.
     ///
     /// Paths should start with `/`, e.g., `/mypath`.
+    /// Path is a regex, so it could match all subroutes.
     ///
     /// # Parameters
     /// - `path`: The path to ignore.
     pub fn ignore_path(mut self, path: &'static str) -> Self {
-        self.config.ignore_pahts.insert(path);
+        self.ignore_paths.push(path);
         self
     }
 
@@ -311,7 +356,6 @@ where
 
     fn layer(&self, inner: S) -> Self::Service {
         let manager = SiteTraceManager {
-            api_key: Arc::new(self.api_key.clone()),
             config: self.config.clone(),
             inner,
             web_client: reqwest::Client::new(),
@@ -324,7 +368,6 @@ where
 #[derive(Clone)]
 pub struct SiteTraceManager<S, ST> {
     inner: S,
-    api_key: Arc<SecretString>,
     config: Config<ST>,
     web_client: reqwest::Client,
     app_state: Option<ST>,
@@ -366,12 +409,11 @@ where
         let mut inner = std::mem::replace(&mut self.inner, clone);
 
         let client = self.web_client.clone();
-        let api_key = Arc::clone(&self.api_key);
         let config = self.config.clone();
         let hostname = (self.config.get_hostname)(&req);
         let ip_address = (self.config.get_ip_address)(&req);
         let path = (self.config.get_path)(&req);
-        let method = req.method().to_string();
+        let method = req.method().into();
         let user_agent = (self.config.get_user_agent)(&req);
         let app_state = self.app_state.clone();
 
@@ -403,13 +445,36 @@ where
                         let uuid = c.value();
                         uuid.parse().unwrap()
                     } else {
-                        // create new uuid
-                        let uuid = Uuid::new_v4();
-                        let cookie =
-                            build_cookie(config.cookie_config.clone(), uuid);
-                        cookies.add(cookie);
-                        uuid
+                        // Create a new uuid
+                        match create_session(
+                            &client,
+                            &config,
+                            &CreateSessionRequest {
+                                ip: &ip_address,
+                                hostname: &hostname,
+                                user_agent: &user_agent,
+                            },
+                        )
+                        .await
+                        {
+                            Ok(uuid) => {
+                                let cookie = build_cookie(
+                                    config.cookie_config.clone(),
+                                    uuid,
+                                );
+                                cookies.add(cookie);
+                                uuid
+                            }
+                            Err(e) => {
+                                tracing::error!(
+                                    "Failed to fetch uuid from sitetrace: {e}"
+                                );
+                                let res: Response = inner.call(req).await?;
+                                return Ok(res);
+                            }
+                        }
                     };
+
                     uuid_to_send = Some(uuid);
 
                     // Not track request, return OK
@@ -424,7 +489,8 @@ where
                 req.extensions_mut().insert(ext);
 
                 let should_trace_req =
-                    !config.ignore_pahts.contains(req.uri().path());
+                    !config.ignore_paths.is_match(req.uri().path());
+                let full_url = get_full_url(&req);
                 let res: Response = inner.call(req).await?;
 
                 if should_trace_req {
@@ -436,36 +502,34 @@ where
                         method,
                         user_id,
                         status: res.status().as_u16(),
-                        response_time: now
+                        response_time_ms: now
                             .elapsed()
                             .as_millis()
                             .try_into()
                             .expect("Failed to cast u128 to u32"),
                         created_at,
                         session_uuid: uuid_to_send,
+                        full_url,
                     };
-                    let mut req_guard = requests_static().lock().await;
-                    let mut instant_guard = last_posted_static().lock().await;
-                    let last_posted = instant_guard.elapsed();
-                    *instant_guard = Instant::now();
-                    drop(instant_guard);
-
-                    req_guard.push(request_data);
-                    if config
-                        .send_strategy
-                        .should_send(last_posted.as_secs(), req_guard.len())
-                    {
-                        let payload = RequestsPayload {
-                            api_key: api_key.expose_secret().to_owned(),
-                            requests: req_guard.to_vec(),
-                        };
-                        let server_url = config.server_url.to_owned();
-                        req_guard.clear();
-                        let send = client
-                            .post(server_url.join(LOG_REQUEST_PATH).unwrap())
-                            .json(&payload)
-                            .send();
-                        (config.exec)(send.boxed());
+                    if let Err(e) = request_data.validate() {
+                        tracing::error!("Failed to validate request data: {e}");
+                    } else {
+                        let mut req_guard = requests_static().lock().await;
+                        let mut instant_guard =
+                            last_posted_static().lock().await;
+                        let last_posted = instant_guard.elapsed();
+                        *instant_guard = Instant::now();
+                        drop(instant_guard);
+                        req_guard.push(request_data);
+                        if config
+                            .send_strategy
+                            .should_send(last_posted.as_secs(), req_guard.len())
+                        {
+                            let payload = req_guard.to_vec();
+                            req_guard.clear();
+                            let send = post_requests(&client, &config, payload);
+                            (config.exec)(send.boxed());
+                        }
                     }
                 }
                 Ok(res)
@@ -492,21 +556,4 @@ fn build_cookie(
         cookie_builder = cookie_builder.domain(domain);
     }
     cookie_builder.build()
-}
-
-// ───── Helpers ──────────────────────────────────────────────────────────── //
-
-fn touch_session<ST>(
-    web_client: &Client,
-    config: &Config<ST>,
-    uuid: &Uuid,
-) -> impl Future<Output = Result<reqwest::Response, reqwest::Error>> {
-    web_client
-        .post(
-            config
-                .server_url
-                .join(&format!("session/{}/prolong", uuid))
-                .unwrap(),
-        )
-        .send()
 }

@@ -3,7 +3,7 @@ use axum_core::extract::FromRequestParts;
 use http::{request::Parts, StatusCode};
 use reqwest::Client;
 
-use crate::{config::Config, impl_debug, utils::HIT_PATH};
+use crate::{api_calls, config::Config, impl_debug};
 
 #[derive(thiserror::Error)]
 pub enum STError {
@@ -11,6 +11,8 @@ pub enum STError {
     UnownedTargetId,
     #[error("Failed to send api call to the sitetrace")]
     FailedRequest,
+    #[error("Failed to parse response")]
+    CantParseResponse,
 }
 
 impl_debug!(STError);
@@ -32,17 +34,19 @@ impl<ST> SiteTraceExt<ST> {
     }
 
     /// It is highly recommended to call the method within a background
-    /// task using `tokio::spawn` or similar mechanisms.
-    /// This ensures that the Axum handler can return a response to the
-    /// client promptly, without being blocked by the API call.
+    /// task using `tokio::spawn`.
     pub async fn make_hit(&self, target_id: &str) -> Result<(), STError> {
-        let mut url = self.config.server_url.join(HIT_PATH).unwrap();
-        url.set_query(Some(target_id));
-        self.web_client.post(url).send().await.map_err(|e| {
-            tracing::error!("Failed to mark action: {e}");
-            STError::FailedRequest
-        })?;
-        Ok(())
+        api_calls::make_hit(&self.web_client, &self.config, target_id).await
+    }
+
+    /// Returns count of active sessions
+    pub async fn get_sessions_count(&self) -> Result<i64, STError> {
+        api_calls::get_sessions_count(&self.web_client, &self.config).await
+    }
+
+    /// Run test request
+    pub async fn run_test_req(&self) -> Result<(), STError> {
+        api_calls::test_request(&self.web_client).await
     }
 }
 

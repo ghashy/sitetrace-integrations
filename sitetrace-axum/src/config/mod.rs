@@ -1,4 +1,3 @@
-use std::collections::HashSet;
 use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 
@@ -6,6 +5,7 @@ use axum::{body::Body, extract::ConnectInfo, http::Request};
 use futures::future::BoxFuture;
 use http::header::{HOST, USER_AGENT};
 use http::{Extensions, HeaderMap};
+use secrecy::SecretString;
 use strategy::SendRequestStrategy;
 use url::Url;
 
@@ -18,8 +18,9 @@ type Closure<T> = dyn for<'a> Fn(&Request<Body>) -> T + Send + Sync;
 
 #[derive(Clone)]
 pub struct Config<ST> {
+    pub(super) api_key: SecretString,
     pub(super) send_strategy: SendRequestStrategy,
-    pub(super) ignore_pahts: HashSet<&'static str>,
+    pub(super) ignore_paths: regex::RegexSet,
     pub(super) server_url: Url,
     pub(super) get_hostname: Arc<Closure<Option<String>>>,
     pub(super) get_ip_address: Arc<Closure<Option<String>>>,
@@ -50,6 +51,7 @@ pub struct Config<ST> {
 impl<ST> Default for Config<ST> {
     fn default() -> Self {
         Self {
+            api_key: Default::default(),
             send_strategy: SendRequestStrategy::default(),
             server_url: "https://api.сайтотряс.рф".parse().unwrap(),
             get_hostname: Arc::new(get_hostname),
@@ -60,7 +62,7 @@ impl<ST> Default for Config<ST> {
                 Box::pin(async move { None })
             })),
             cookie_config: Default::default(),
-            ignore_pahts: HashSet::new(),
+            ignore_paths: regex::RegexSet::empty(),
             exec: Arc::new(Box::new(|_| {
                 panic!("future exec function is not provided!");
             })),
@@ -118,4 +120,28 @@ fn get_user_agent(req: &Request<Body>) -> Option<String> {
     req.headers()
         .get(USER_AGENT)
         .and_then(|h| h.to_str().ok().map(|s| s.to_owned()))
+}
+
+pub(crate) fn get_full_url(req: &Request<Body>) -> Option<String> {
+    let Some(host) = get_hostname(&req) else {
+        return None;
+    };
+
+    // Get the scheme
+    let Some(scheme) = req.uri().scheme_str() else {
+        return None;
+    };
+
+    // Build full URL
+    let full_url = format!(
+        "{}://{}/{}{}",
+        scheme,
+        host,
+        req.uri().path(),
+        req.uri()
+            .query()
+            .map(|q| format!("?{}", q))
+            .unwrap_or_default()
+    );
+    Some(full_url)
 }

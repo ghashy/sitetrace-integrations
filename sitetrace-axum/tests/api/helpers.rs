@@ -22,7 +22,7 @@ pub struct App {
 #[allow(dead_code)]
 impl App {
     pub async fn new(app: Router) -> Self {
-        let address = format!("{}:{}", "127.0.0.1", 8000);
+        let address = format!("{}:{}", "127.0.0.1", 8001);
         let listener = TcpListener::bind(address).await.unwrap();
 
         Self {

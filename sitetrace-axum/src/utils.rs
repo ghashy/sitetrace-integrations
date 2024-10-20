@@ -1,8 +1,7 @@
+use serde::Serialize;
 use time::Duration;
 
 pub(crate) const PROLONG_PATH: &str = "/sitetrace_prolong";
-pub(crate) const LOG_REQUEST_PATH: &str = "api/log-request";
-pub(crate) const HIT_PATH: &str = "api/action";
 pub(crate) const SITETRACE_COOKIE: &str = "sitetrace_uuid";
 pub(crate) const DEFAULT_COOKIE_DURATION: Duration = Duration::weeks(2);
 
@@ -29,4 +28,39 @@ macro_rules! impl_debug {
             }
         }
     };
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "UPPERCASE")]
+pub enum HttpMethod {
+    Options,
+    Get,
+    Post,
+    Put,
+    Delete,
+    Head,
+    Trace,
+    Connect,
+    Patch,
+    Other,
+}
+
+impl From<&http::Method> for HttpMethod {
+    fn from(value: &http::Method) -> Self {
+        match value {
+            &http::Method::GET => HttpMethod::Get,
+            &http::Method::POST => HttpMethod::Post,
+            &http::Method::PUT => HttpMethod::Put,
+            &http::Method::DELETE => HttpMethod::Delete,
+            &http::Method::HEAD => HttpMethod::Head,
+            &http::Method::OPTIONS => HttpMethod::Options,
+            &http::Method::CONNECT => HttpMethod::Connect,
+            &http::Method::PATCH => HttpMethod::Patch,
+            &http::Method::TRACE => HttpMethod::Trace,
+            m => {
+                tracing::warn!("Got non-standard http method: {m}");
+                HttpMethod::Other
+            }
+        }
+    }
 }

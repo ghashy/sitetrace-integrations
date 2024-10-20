@@ -1,6 +1,6 @@
 use axum::{extract::FromRequestParts, routing, Router};
 
-use sitetrace_axum::{SiteTraceExt, SiteTraceLayer};
+use sitetrace_axum::{SiteTraceExt, SiteTraceLayer, SiteTraceLayerBuilder};
 
 use helpers::{shutdown_signal, App};
 use time::Duration;
@@ -15,27 +15,30 @@ async fn testme() {
         .with_secure(true)
         .with_expiry(tower_sessions::Expiry::OnInactivity(Duration::days(1)));
     let layer: SiteTraceLayer<()> =
-        SiteTraceLayer::new("apikey".to_owned(), |fut| {
-            tokio::spawn(async move {
-                match fut.await {
-                    Ok(r) => {
-                        dbg!(r);
+        SiteTraceLayerBuilder::new("apikey".to_owned())
+            .build_with_exec(|fut| {
+                tokio::spawn(async move {
+                    match fut.await {
+                        Ok(r) => {
+                            dbg!(r);
+                        }
+                        Err(e) => {
+                            tracing::error!(
+                                "Failed to send request to sitetrace: {e}"
+                            );
+                        }
                     }
-                    Err(e) => {
-                        tracing::error!(
-                            "Failed to send request to sitetrace: {e}"
-                        );
-                    }
-                }
-            });
-        });
+                });
+            })
+            .unwrap();
     let app: Router<()> = Router::new()
         .route(
-            "/hello",
+            "/test",
             routing::get(
                 |ext: SiteTraceExt,
                  session: tower_sessions::Session,
                  cookies: tower_cookies::Cookies| async move {
+                    ext.run_test_req().await.unwrap();
                     "Hello world"
                 },
             ),
