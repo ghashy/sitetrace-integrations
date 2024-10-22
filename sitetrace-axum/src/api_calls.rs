@@ -8,6 +8,7 @@ use uuid::Uuid;
 
 use crate::{
     config::Config,
+    extension::{HitId, TargetId},
     middleware::{CreateSessionRequest, RequestData, RequestsPayload},
     STError,
 };
@@ -85,12 +86,7 @@ pub(crate) fn post_requests<ST>(
     payload: Vec<RequestData>,
 ) -> impl Future<Output = Result<reqwest::Response, reqwest::Error>> {
     client
-        .post(
-            config
-                .server_url
-                .join("service-api/trace-requests")
-                .unwrap(),
-        )
+        .post(config.server_url.join("service-api/requests").unwrap())
         .bearer_auth(config.api_key.expose_secret())
         .json(&payload)
         .send()
@@ -99,13 +95,13 @@ pub(crate) fn post_requests<ST>(
 pub(crate) async fn make_hit<ST>(
     web_client: &Client,
     config: &Config<ST>,
-    target_id: &str,
-) -> Result<(), STError> {
-    web_client
+    target_id: TargetId,
+) -> Result<HitId, STError> {
+    let hit_id = web_client
         .post(
             config
                 .server_url
-                .join(&format!("service-api/hit/{}", target_id))
+                .join(&format!("service-api/target/{}/hit", target_id))
                 .unwrap(),
         )
         .bearer_auth(config.api_key.expose_secret())
@@ -114,8 +110,21 @@ pub(crate) async fn make_hit<ST>(
         .map_err(|e| {
             tracing::error!("Failed to mark action: {e}");
             STError::FailedRequest
+        })?
+        .text()
+        .await
+        .map_err(|e| {
+            tracing::error!(
+                "Failed to get hit_id text body from response: {e}"
+            );
+            STError::FailedRequest
+        })?
+        .parse()
+        .map_err(|e| {
+            tracing::error!("Failed to parse hit_id: {e}");
+            STError::FailedRequest
         })?;
-    Ok(())
+    Ok(hit_id)
 }
 
 pub(crate) async fn test_request(web_client: &Client) -> Result<(), STError> {

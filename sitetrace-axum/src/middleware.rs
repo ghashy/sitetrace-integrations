@@ -37,11 +37,29 @@ const SIMPLE_ISO: Iso8601<6651332276402088934156738804825718784> = Iso8601::<
 >;
 time::serde::format_description!(iso_format, OffsetDateTime, SIMPLE_ISO);
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Validate)]
+#[garde(allow_unvalidated)]
 pub(crate) struct CreateSessionRequest<'a> {
     ip: &'a Option<String>,
-    hostname: &'a Option<String>,
+    #[garde(inner(length(max = 100)))]
+    hostname: Option<String>,
     user_agent: &'a Option<String>,
+    #[garde(inner(length(max = 100)))]
+    user_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Validate)]
+#[garde(allow_unvalidated)]
+pub(crate) enum RequestType {
+    Session {
+        session_uuid: Uuid,
+    },
+    Single {
+        ip_address: Option<String>,
+        #[garde(inner(length(max = 100)))]
+        hostname: Option<String>,
+        user_agent: Option<String>,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Validate)]
@@ -53,21 +71,15 @@ pub(crate) struct RequestData {
     method: HttpMethod,
     response_time_ms: u32,
     status: u16,
-    #[garde(inner(length(max = 100)))]
-    hostname: Option<String>,
-    ip_address: Option<String>,
-    #[garde(inner(length(max = 100)))]
-    user_agent: Option<String>,
-    #[garde(inner(length(max = 100)))]
-    user_id: Option<String>,
-    session_uuid: Option<Uuid>,
     #[garde(inner(length(max = 1000)))]
     full_url: Option<String>,
+    #[garde(dive)]
+    request_type: RequestType,
 }
 
 #[derive(Debug, Clone, Serialize, Validate)]
 pub(crate) struct RequestsPayload {
-    #[garde(length(min = 1, max = 5000))]
+    #[garde(length(min = 1, max = 1000))]
     requests: Vec<RequestData>,
 }
 
@@ -83,6 +95,9 @@ pub fn last_posted_static() -> &'static Mutex<Instant> {
 
 /// Hint: to allow use cookies for SiteTrace service, just set any cookie for client.
 /// If 'cookie' field is found in request headers, cookies are considered allowed.
+///
+/// Hint: run axum application with `IntoMakeServiceWithConnectInfo` option
+/// to have accurate ip address detection.
 #[derive(Clone)]
 pub struct SiteTraceLayer<ST = ()> {
     config: Config<ST>,
@@ -219,10 +234,15 @@ impl<'a, ST> SiteTraceLayerBuilder<'a, ST> {
     /// # Parameters
     /// - `server_url`: A `Url` object representing the server's base URL to be used in
     ///   subsequent requests.
-    pub fn with_server_url(mut self, mut server_url: Url) -> Self {
-        server_url.set_path("");
-        self.config.server_url = server_url;
-        self
+    pub fn with_server_url<T: AsRef<str>>(
+        mut self,
+        server_url: T,
+    ) -> Result<Self, url::ParseError> {
+        let server_url = server_url.as_ref();
+        let mut url: Url = server_url.parse()?;
+        url.set_path("");
+        self.config.server_url = url;
+        Ok(self)
     }
 
     /// Sets a hostname mapping function for the `SiteTraceLayer`.
@@ -416,17 +436,11 @@ where
         let method = req.method().into();
         let user_agent = (self.config.get_user_agent)(&req);
         let app_state = self.app_state.clone();
+        let headers = req.headers().clone();
 
+        // TODO: Refactor code
         Box::pin(
             async move {
-                // Get user_id
-                let user_id = if let Some(app_state) = app_state {
-                    let headers = req.headers().clone();
-                    (config.get_user_id)(app_state, headers).await
-                } else {
-                    None
-                };
-
                 let Some(cookies) =
                     req.extensions_mut().get_mut::<tower_cookies::Cookies>()
                 else {
@@ -445,15 +459,30 @@ where
                         let uuid = c.value();
                         uuid.parse().unwrap()
                     } else {
-                        // Create a new uuid
+                        // Get user_id
+                        let user_id = if let Some(app_state) = app_state {
+                            (config.get_user_id)(app_state, headers).await
+                        } else {
+                            None
+                        };
+                        // Create a new session (fetch uuid)
+                        let create_session_request = CreateSessionRequest {
+                            ip: &ip_address,
+                            hostname: hostname.clone(),
+                            user_agent: &user_agent,
+                            user_id,
+                        };
+                        if let Err(e) = create_session_request.validate() {
+                            tracing::error!(
+                                "Failed to validate request data: {e}"
+                            );
+                            let res: Response = inner.call(req).await?;
+                            return Ok(res);
+                        }
                         match create_session(
                             &client,
                             &config,
-                            &CreateSessionRequest {
-                                ip: &ip_address,
-                                hostname: &hostname,
-                                user_agent: &user_agent,
-                            },
+                            &create_session_request,
                         )
                         .await
                         {
@@ -488,6 +517,7 @@ where
                 let ext = SiteTraceExt::new(config.clone());
                 req.extensions_mut().insert(ext);
 
+                // TODO: write tests for ignore path feature
                 let should_trace_req =
                     !config.ignore_paths.is_match(req.uri().path());
                 let full_url = get_full_url(&req);
@@ -495,12 +525,16 @@ where
 
                 if should_trace_req {
                     let request_data = RequestData {
-                        hostname,
-                        ip_address,
                         path,
-                        user_agent,
                         method,
-                        user_id,
+                        request_type: match uuid_to_send {
+                            Some(u) => RequestType::Session { session_uuid: u },
+                            None => RequestType::Single {
+                                ip_address,
+                                hostname,
+                                user_agent,
+                            },
+                        },
                         status: res.status().as_u16(),
                         response_time_ms: now
                             .elapsed()
@@ -508,7 +542,6 @@ where
                             .try_into()
                             .expect("Failed to cast u128 to u32"),
                         created_at,
-                        session_uuid: uuid_to_send,
                         full_url,
                     };
                     if let Err(e) = request_data.validate() {

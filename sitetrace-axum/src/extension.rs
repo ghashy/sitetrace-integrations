@@ -5,6 +5,9 @@ use reqwest::Client;
 
 use crate::{api_calls, config::Config, impl_debug};
 
+pub type HitId = i32;
+pub type TargetId = i32;
+
 #[derive(thiserror::Error)]
 pub enum STError {
     #[error("Target id is not owned by api_key user")]
@@ -35,7 +38,10 @@ impl<ST> SiteTraceExt<ST> {
 
     /// It is highly recommended to call the method within a background
     /// task using `tokio::spawn`.
-    pub async fn make_hit(&self, target_id: &str) -> Result<(), STError> {
+    pub async fn make_hit(
+        &self,
+        target_id: TargetId,
+    ) -> Result<HitId, STError> {
         api_calls::make_hit(&self.web_client, &self.config, target_id).await
     }
 
