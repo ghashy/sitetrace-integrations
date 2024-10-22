@@ -1,9 +1,13 @@
 [package]
 name = "sitetrace-axum"
-version = "0.1.0"
+keywords = ["http", "web", "tracing", "analyze"]
+categories = ["asynchronous", "network-programming", "web-programming"]
+description = "Axum client (middleware) for integrating with sitetrace service"
+readme = "README.md"
+version = "0.0.1"
 edition = "2021"
+repository = "https://github.com/ghashy/sitetrace-integrations"
 
-# TODO: Move all common dependencies into workspace level (as in tower-session crate)
 [dependencies]
 axum = { version = "0.7.7", features = ["macros", "tracing"] }
 async-trait = "0.1.83"
