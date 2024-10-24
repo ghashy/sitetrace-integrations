@@ -64,7 +64,6 @@ where
 {
     type Rejection = (http::StatusCode, &'static str);
 
-    #[tracing::instrument]
     async fn from_request_parts(
         parts: &mut Parts,
         _state: &S,
