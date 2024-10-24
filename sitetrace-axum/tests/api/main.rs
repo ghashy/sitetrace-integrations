@@ -35,7 +35,7 @@ async fn testme() {
         .route(
             "/test",
             routing::get(
-                |ext: SiteTraceExt,
+                |ext: SiteTraceExt<()>,
                  session: tower_sessions::Session,
                  cookies: tower_cookies::Cookies| async move {
                     ext.run_test_req().await.unwrap();

@@ -22,8 +22,9 @@ impl_debug!(STError);
 
 /// The extension is designed to interact with
 /// SiteTrace API from within handlers.
+/// `ST` - is generic `app state` parameter.
 #[derive(Clone)]
-pub struct SiteTraceExt<ST = ()> {
+pub struct SiteTraceExt<ST> {
     web_client: Client,
     config: Config<ST>,
 }

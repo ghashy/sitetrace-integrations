@@ -13,10 +13,11 @@ use crate::{
     STError,
 };
 
-pub(crate) fn touch_session<ST>(
+pub(crate) fn touch_session<'a, ST>(
     web_client: &Client,
     config: &Config<ST>,
     uuid: &Uuid,
+    req: &CreateSessionRequest<'a>,
 ) -> impl Future<Output = Result<reqwest::Response, reqwest::Error>> {
     web_client
         .post(
@@ -26,6 +27,7 @@ pub(crate) fn touch_session<ST>(
                 .unwrap(),
         )
         .bearer_auth(config.api_key.expose_secret())
+        .json(req)
         .send()
 }
 

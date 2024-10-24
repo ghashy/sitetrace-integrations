@@ -550,12 +550,24 @@ async fn handle_session_get_uuid<ST: 'static>(
     user_agent: &Option<String>,
     headers: HeaderMap,
 ) -> Option<Uuid> {
+    let user_id = if let Some(app_state) = app_state {
+        (config.get_user_id)(app_state, headers).await
+    } else {
+        None
+    };
+    let create_session_request = CreateSessionRequest {
+        ip: ip_address,
+        hostname: hostname.clone(),
+        user_agent: &user_agent,
+        user_id,
+    };
     if let Some(c) = cookies.get(&config.cookie_config.name) {
         // Prolong existing session
         let uuid_str = c.value();
         let uuid = uuid_str.parse().unwrap();
         if let None = cookies.get(SITETRACE_TIMEOUT_COOKIE) {
-            let f = touch_session(client, config, &uuid);
+            let f =
+                touch_session(client, config, &uuid, &create_session_request);
             (config.exec)(f.boxed());
             let cookie =
                 build_sitetrace_timeout_cookie(config.cookie_config.clone());
@@ -564,17 +576,6 @@ async fn handle_session_get_uuid<ST: 'static>(
         Some(uuid)
     } else {
         // Create a new session
-        let user_id = if let Some(app_state) = app_state {
-            (config.get_user_id)(app_state, headers).await
-        } else {
-            None
-        };
-        let create_session_request = CreateSessionRequest {
-            ip: ip_address,
-            hostname: hostname.clone(),
-            user_agent: &user_agent,
-            user_id,
-        };
         if let Err(e) = create_session_request.validate() {
             tracing::error!("Failed to validate request data: {e}");
         }
