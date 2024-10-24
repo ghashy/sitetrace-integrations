@@ -477,9 +477,9 @@ where
                 let full_url = get_full_url(&req);
                 let res: Response = inner.call(req).await?;
 
-                if should_trace_req {
-                    try_send_requests(
-                        RequestData {
+                try_send_requests(
+                    if should_trace_req {
+                        Some(RequestData {
                             path,
                             method,
                             request_type: match uuid_to_send {
@@ -500,12 +500,14 @@ where
                                 .expect("Failed to cast u128 to u32"),
                             created_at,
                             full_url,
-                        },
-                        config,
-                        client,
-                    )
-                    .await;
-                }
+                        })
+                    } else {
+                        None
+                    },
+                    config,
+                    client,
+                )
+                .await;
                 Ok(res)
             }
             .instrument(span),
@@ -514,7 +516,7 @@ where
 }
 
 async fn try_send_requests<ST: 'static>(
-    request_data: RequestData,
+    request_data: Option<RequestData>,
     config: Config<ST>,
     client: reqwest::Client,
 ) {
@@ -526,7 +528,9 @@ async fn try_send_requests<ST: 'static>(
         let last_posted = instant_guard.elapsed();
         *instant_guard = Instant::now();
         drop(instant_guard);
-        req_guard.push(request_data);
+        if let Some(data) = request_data {
+            req_guard.push(data);
+        }
         if config
             .send_strategy
             .should_send(last_posted.as_secs(), req_guard.len())

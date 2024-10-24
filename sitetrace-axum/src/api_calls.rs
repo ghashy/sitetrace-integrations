@@ -9,7 +9,7 @@ use uuid::Uuid;
 use crate::{
     config::Config,
     extension::{HitId, TargetId},
-    middleware::{CreateSessionRequest, RequestData, RequestsPayload},
+    middleware::{CreateSessionRequest, RequestsPayload},
     STError,
 };
 
