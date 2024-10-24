@@ -1,7 +1,7 @@
 use serde::Serialize;
 use time::Duration;
 
-pub(crate) const PROLONG_PATH: &str = "/sitetrace_prolong";
+pub(crate) const SITETRACE_TIMEOUT_COOKIE: &str = "sitetrace_timeout";
 pub(crate) const SITETRACE_COOKIE: &str = "sitetrace_uuid";
 pub(crate) const DEFAULT_COOKIE_DURATION: Duration = Duration::weeks(2);
 

@@ -83,7 +83,7 @@ pub(crate) async fn get_sessions_count<ST>(
 pub(crate) fn post_requests<ST>(
     client: &Client,
     config: &Config<ST>,
-    payload: Vec<RequestData>,
+    payload: RequestsPayload,
 ) -> impl Future<Output = Result<reqwest::Response, reqwest::Error>> {
     client
         .post(config.server_url.join("service-api/requests").unwrap())

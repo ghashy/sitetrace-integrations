@@ -10,19 +10,20 @@ use garde::Validate;
 use http::HeaderMap;
 use regex::RegexSet;
 use serde::Serialize;
+use time::ext::NumericalDuration;
 use time::format_description::well_known::iso8601::{self, TimePrecision};
 use time::format_description::well_known::Iso8601;
 use time::OffsetDateTime;
 use tower::{Layer, Service};
-use tower_cookies::CookieManager;
+use tower_cookies::{CookieManager, Cookies};
 use tracing::Instrument;
 use url::Url;
 use uuid::Uuid;
 
-use crate::api_calls::{create_session, post_requests, touch_session};
+use crate::api_calls::{self, create_session, post_requests, touch_session};
 use crate::config::{get_full_url, Config};
 use crate::extension::SiteTraceExt;
-use crate::utils::{HttpMethod, PROLONG_PATH};
+use crate::utils::{HttpMethod, SITETRACE_TIMEOUT_COOKIE};
 use crate::{CookieConfig, SendRequestStrategy};
 
 const SIMPLE_ISO: Iso8601<6651332276402088934156738804825718784> = Iso8601::<
@@ -451,68 +452,21 @@ where
                 };
 
                 let cookie_allowed = !cookies.list().is_empty();
-                let mut uuid_to_send = None;
-                if cookie_allowed {
-                    let uuid = if let Some(c) =
-                        cookies.get(&config.cookie_config.name)
-                    {
-                        let uuid = c.value();
-                        uuid.parse().unwrap()
-                    } else {
-                        // Get user_id
-                        let user_id = if let Some(app_state) = app_state {
-                            (config.get_user_id)(app_state, headers).await
-                        } else {
-                            None
-                        };
-                        // Create a new session (fetch uuid)
-                        let create_session_request = CreateSessionRequest {
-                            ip: &ip_address,
-                            hostname: hostname.clone(),
-                            user_agent: &user_agent,
-                            user_id,
-                        };
-                        if let Err(e) = create_session_request.validate() {
-                            tracing::error!(
-                                "Failed to validate request data: {e}"
-                            );
-                            let res: Response = inner.call(req).await?;
-                            return Ok(res);
-                        }
-                        match create_session(
-                            &client,
-                            &config,
-                            &create_session_request,
-                        )
-                        .await
-                        {
-                            Ok(uuid) => {
-                                let cookie = build_cookie(
-                                    config.cookie_config.clone(),
-                                    uuid,
-                                );
-                                cookies.add(cookie);
-                                uuid
-                            }
-                            Err(e) => {
-                                tracing::error!(
-                                    "Failed to fetch uuid from sitetrace: {e}"
-                                );
-                                let res: Response = inner.call(req).await?;
-                                return Ok(res);
-                            }
-                        }
-                    };
-
-                    uuid_to_send = Some(uuid);
-
-                    // Not track request, return OK
-                    if req.uri().path().eq(PROLONG_PATH) {
-                        let send = touch_session(&client, &config, &uuid);
-                        (config.exec)(send.boxed());
-                        return Ok(Response::default());
-                    }
-                }
+                let uuid_to_send = if cookie_allowed {
+                    handle_session_get_uuid(
+                        cookies,
+                        &config,
+                        app_state,
+                        &client,
+                        &ip_address,
+                        &hostname,
+                        &user_agent,
+                        headers,
+                    )
+                    .await
+                } else {
+                    None
+                };
 
                 let ext = SiteTraceExt::new(config.clone());
                 req.extensions_mut().insert(ext);
@@ -524,46 +478,33 @@ where
                 let res: Response = inner.call(req).await?;
 
                 if should_trace_req {
-                    let request_data = RequestData {
-                        path,
-                        method,
-                        request_type: match uuid_to_send {
-                            Some(u) => RequestType::Session { session_uuid: u },
-                            None => RequestType::Single {
-                                ip_address,
-                                hostname,
-                                user_agent,
+                    try_send_requests(
+                        RequestData {
+                            path,
+                            method,
+                            request_type: match uuid_to_send {
+                                Some(u) => {
+                                    RequestType::Session { session_uuid: u }
+                                }
+                                None => RequestType::Single {
+                                    ip_address,
+                                    hostname,
+                                    user_agent,
+                                },
                             },
+                            status: res.status().as_u16(),
+                            response_time_ms: now
+                                .elapsed()
+                                .as_millis()
+                                .try_into()
+                                .expect("Failed to cast u128 to u32"),
+                            created_at,
+                            full_url,
                         },
-                        status: res.status().as_u16(),
-                        response_time_ms: now
-                            .elapsed()
-                            .as_millis()
-                            .try_into()
-                            .expect("Failed to cast u128 to u32"),
-                        created_at,
-                        full_url,
-                    };
-                    if let Err(e) = request_data.validate() {
-                        tracing::error!("Failed to validate request data: {e}");
-                    } else {
-                        let mut req_guard = requests_static().lock().await;
-                        let mut instant_guard =
-                            last_posted_static().lock().await;
-                        let last_posted = instant_guard.elapsed();
-                        *instant_guard = Instant::now();
-                        drop(instant_guard);
-                        req_guard.push(request_data);
-                        if config
-                            .send_strategy
-                            .should_send(last_posted.as_secs(), req_guard.len())
-                        {
-                            let payload = req_guard.to_vec();
-                            req_guard.clear();
-                            let send = post_requests(&client, &config, payload);
-                            (config.exec)(send.boxed());
-                        }
-                    }
+                        config,
+                        client,
+                    )
+                    .await;
                 }
                 Ok(res)
             }
@@ -572,7 +513,87 @@ where
     }
 }
 
-fn build_cookie(
+async fn try_send_requests<ST: 'static>(
+    request_data: RequestData,
+    config: Config<ST>,
+    client: reqwest::Client,
+) {
+    if let Err(e) = request_data.validate() {
+        tracing::error!("Failed to validate request data: {e}");
+    } else {
+        let mut req_guard = requests_static().lock().await;
+        let mut instant_guard = last_posted_static().lock().await;
+        let last_posted = instant_guard.elapsed();
+        *instant_guard = Instant::now();
+        drop(instant_guard);
+        req_guard.push(request_data);
+        if config
+            .send_strategy
+            .should_send(last_posted.as_secs(), req_guard.len())
+        {
+            let requests = req_guard.to_vec();
+            req_guard.clear();
+            let send =
+                post_requests(&client, &config, RequestsPayload { requests });
+            (config.exec)(send.boxed());
+        }
+    }
+}
+
+async fn handle_session_get_uuid<ST: 'static>(
+    cookies: &mut Cookies,
+    config: &Config<ST>,
+    app_state: Option<ST>,
+    client: &reqwest::Client,
+    ip_address: &Option<String>,
+    hostname: &Option<String>,
+    user_agent: &Option<String>,
+    headers: HeaderMap,
+) -> Option<Uuid> {
+    if let Some(c) = cookies.get(&config.cookie_config.name) {
+        // Prolong existing session
+        let uuid_str = c.value();
+        let uuid = uuid_str.parse().unwrap();
+        if let None = cookies.get(SITETRACE_TIMEOUT_COOKIE) {
+            let f = touch_session(client, config, &uuid);
+            (config.exec)(f.boxed());
+            let cookie =
+                build_sitetrace_timeout_cookie(config.cookie_config.clone());
+            cookies.add(cookie);
+        }
+        Some(uuid)
+    } else {
+        // Create a new session
+        let user_id = if let Some(app_state) = app_state {
+            (config.get_user_id)(app_state, headers).await
+        } else {
+            None
+        };
+        let create_session_request = CreateSessionRequest {
+            ip: ip_address,
+            hostname: hostname.clone(),
+            user_agent: &user_agent,
+            user_id,
+        };
+        if let Err(e) = create_session_request.validate() {
+            tracing::error!("Failed to validate request data: {e}");
+        }
+        match create_session(&client, &config, &create_session_request).await {
+            Ok(uuid) => {
+                let cookie =
+                    build_sitetrace_cookie(config.cookie_config.clone(), uuid);
+                cookies.add(cookie);
+                Some(uuid)
+            }
+            Err(e) => {
+                tracing::error!("Failed to fetch uuid from sitetrace: {e}");
+                None
+            }
+        }
+    }
+}
+
+fn build_sitetrace_cookie(
     config: CookieConfig<'static>,
     uuid: Uuid,
 ) -> tower_cookies::Cookie {
@@ -588,5 +609,17 @@ fn build_cookie(
     if let Some(domain) = config.domain {
         cookie_builder = cookie_builder.domain(domain);
     }
+    cookie_builder.build()
+}
+
+fn build_sitetrace_timeout_cookie(
+    config: CookieConfig<'static>,
+) -> tower_cookies::Cookie {
+    let exp = OffsetDateTime::now_utc().saturating_add(7.seconds());
+    let cookie_builder =
+        tower_cookies::Cookie::build((SITETRACE_TIMEOUT_COOKIE, "1"))
+            .http_only(true)
+            .same_site(config.same_site)
+            .expires(exp);
     cookie_builder.build()
 }
