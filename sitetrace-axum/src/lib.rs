@@ -1,6 +1,6 @@
 pub use config::cookie::CookieConfig;
 pub use config::strategy::SendRequestStrategy;
-pub use extension::STError;
+pub use extension::SiteTraceError;
 pub use extension::SiteTraceExt;
 pub use middleware::SiteTraceLayer;
 pub use middleware::SiteTraceLayerBuilder;

@@ -9,7 +9,7 @@ pub type HitId = i32;
 pub type TargetId = i32;
 
 #[derive(thiserror::Error)]
-pub enum STError {
+pub enum SiteTraceError {
     #[error("Target id is not owned by api_key user")]
     UnownedTargetId,
     #[error("Failed to send api call to the sitetrace")]
@@ -18,7 +18,7 @@ pub enum STError {
     CantParseResponse,
 }
 
-impl_debug!(STError);
+impl_debug!(SiteTraceError);
 
 /// The extension is designed to interact with
 /// SiteTrace API from within handlers.
@@ -42,18 +42,24 @@ impl<ST> SiteTraceExt<ST> {
     pub async fn make_hit(
         &self,
         target_id: TargetId,
-    ) -> Result<HitId, STError> {
+    ) -> Result<HitId, SiteTraceError> {
         api_calls::make_hit(&self.web_client, &self.config, target_id).await
     }
 
     /// Returns count of active sessions
-    pub async fn get_sessions_count(&self) -> Result<i64, STError> {
+    pub async fn get_sessions_count(&self) -> Result<i64, SiteTraceError> {
         api_calls::get_sessions_count(&self.web_client, &self.config).await
     }
 
     /// Run test request
-    pub async fn run_test_req(&self) -> Result<(), STError> {
+    pub async fn run_test_req(&self) -> Result<(), SiteTraceError> {
         api_calls::test_request(&self.web_client).await
+    }
+
+    pub async fn try_send_requests_to_sitetrace(
+        &self,
+    ) -> Result<(), SiteTraceError> {
+        Ok(())
     }
 }
 

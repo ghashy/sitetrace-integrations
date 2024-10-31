@@ -10,7 +10,7 @@ use crate::{
     config::Config,
     extension::{HitId, TargetId},
     middleware::{CreateSessionRequest, RequestsPayload},
-    STError,
+    SiteTraceError,
 };
 
 pub(crate) fn touch_session<'a, ST>(
@@ -57,7 +57,7 @@ pub(crate) async fn create_session<'a, ST>(
 pub(crate) async fn get_sessions_count<ST>(
     web_client: &Client,
     config: &Config<ST>,
-) -> Result<i64, STError> {
+) -> Result<i64, SiteTraceError> {
     let url = config.server_url.join("service-api/session/count").unwrap();
     let count = web_client
         .get(url)
@@ -66,18 +66,18 @@ pub(crate) async fn get_sessions_count<ST>(
         .await
         .map_err(|e| {
             tracing::error!("Failed to get sessions count: {e}");
-            STError::FailedRequest
+            SiteTraceError::FailedRequest
         })?
         .text()
         .map_err(|e| {
             tracing::error!("Failed to parse response as text: {e}");
-            STError::CantParseResponse
+            SiteTraceError::CantParseResponse
         })
         .await?
         .parse::<i64>()
         .map_err(|e| {
             tracing::error!("Failed to parse response text as i64: {e}");
-            STError::CantParseResponse
+            SiteTraceError::CantParseResponse
         })?;
     Ok(count)
 }
@@ -98,7 +98,7 @@ pub(crate) async fn make_hit<ST>(
     web_client: &Client,
     config: &Config<ST>,
     target_id: TargetId,
-) -> Result<HitId, STError> {
+) -> Result<HitId, SiteTraceError> {
     let hit_id = web_client
         .post(
             config
@@ -111,7 +111,7 @@ pub(crate) async fn make_hit<ST>(
         .await
         .map_err(|e| {
             tracing::error!("Failed to mark action: {e}");
-            STError::FailedRequest
+            SiteTraceError::FailedRequest
         })?
         .text()
         .await
@@ -119,17 +119,19 @@ pub(crate) async fn make_hit<ST>(
             tracing::error!(
                 "Failed to get hit_id text body from response: {e}"
             );
-            STError::FailedRequest
+            SiteTraceError::FailedRequest
         })?
         .parse()
         .map_err(|e| {
             tracing::error!("Failed to parse hit_id: {e}");
-            STError::FailedRequest
+            SiteTraceError::FailedRequest
         })?;
     Ok(hit_id)
 }
 
-pub(crate) async fn test_request(web_client: &Client) -> Result<(), STError> {
+pub(crate) async fn test_request(
+    web_client: &Client,
+) -> Result<(), SiteTraceError> {
     let url = "http://localhost:8000"
         .parse::<Url>()
         .unwrap()
@@ -142,7 +144,7 @@ pub(crate) async fn test_request(web_client: &Client) -> Result<(), STError> {
         .await
         .map_err(|e| {
             tracing::error!("Failed to run test request: {e}");
-            STError::FailedRequest
+            SiteTraceError::FailedRequest
         })?;
     dbg!(resp);
     Ok(())

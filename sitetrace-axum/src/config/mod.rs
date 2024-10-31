@@ -79,12 +79,12 @@ fn get_hostname(req: &Request<Body>) -> Option<String> {
 fn get_ip_address(req: &Request<Body>) -> Option<String> {
     let extensions = req.extensions();
     let headers = req.headers();
-    if let Some(val) = ip_from_connect_info(extensions) {
+    if let Some(val) = ip_from_x_real_ip(headers) {
         Some(val.to_string())
-    } else if let Some(val) = ip_from_x_real_ip(headers) {
+    } else if let Some(val) = ip_from_x_forwarded_for(headers) {
         Some(val.to_string())
     } else {
-        ip_from_x_forwarded_for(headers).map(|val| val.to_string())
+        ip_from_connect_info(extensions).map(|val| val.to_string())
     }
 }
 

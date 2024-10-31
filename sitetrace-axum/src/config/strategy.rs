@@ -11,6 +11,9 @@ pub enum SendRequestStrategy {
 
 impl SendRequestStrategy {
     pub(crate) fn should_send(&self, elapsed: u64, count: usize) -> bool {
+        if count < 1 {
+            return false;
+        }
         match self {
             SendRequestStrategy::TimeInterval(i) => elapsed >= *i,
             SendRequestStrategy::RequestCountExceed(c) => count >= *c,
