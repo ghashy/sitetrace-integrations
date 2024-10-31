@@ -420,7 +420,6 @@ where
     fn call(&mut self, mut req: Request<Body>) -> Self::Future {
         let now = Instant::now();
         let created_at = OffsetDateTime::now_utc();
-        let span = tracing::info_span!("sitetrace call");
 
         // Because the inner service can panic until ready, we need to ensure we only
         // use the ready service.
@@ -439,83 +438,85 @@ where
         let app_state = self.app_state.clone();
         let headers = req.headers().clone();
 
-        // TODO: Refactor code
-        Box::pin(
-            async move {
-                let Some(cookies) =
-                    req.extensions_mut().get_mut::<tower_cookies::Cookies>()
-                else {
-                    // In practice this should never happen because we wrap `CookieManager`
-                    // directly.
-                    tracing::error!("missing cookies request extension");
-                    return Ok(Response::default());
-                };
+        // TODO: write tests for ignore path feature
+        let should_trace_req = !config.ignore_paths.is_match(req.uri().path());
 
-                let cookie_allowed = !cookies.list().is_empty();
-                let uuid_to_send = if cookie_allowed {
-                    handle_session_get_uuid(
-                        cookies,
-                        &config,
-                        app_state,
-                        &client,
-                        &ip_address,
-                        &hostname,
-                        &user_agent,
-                        headers,
-                    )
-                    .await
+        let future = async move {
+            let Some(cookies) =
+                req.extensions_mut().get_mut::<tower_cookies::Cookies>()
+            else {
+                // In practice this should never happen because we wrap `CookieManager`
+                // directly.
+                tracing::error!("missing cookies request extension");
+                return Ok(Response::default());
+            };
+
+            let cookie_allowed = !cookies.list().is_empty();
+            let uuid_to_send = if cookie_allowed {
+                handle_session_get_uuid(
+                    cookies,
+                    &config,
+                    app_state,
+                    &client,
+                    &ip_address,
+                    &hostname,
+                    &user_agent,
+                    headers,
+                )
+                .await
+            } else {
+                None
+            };
+
+            let ext = SiteTraceExt::new(config.clone());
+            req.extensions_mut().insert(ext);
+
+            let full_url = get_full_url(&req);
+            let res: Response = inner.call(req).await?;
+
+            try_send_requests(
+                if should_trace_req {
+                    Some(RequestData {
+                        path,
+                        method,
+                        request_type: match uuid_to_send {
+                            Some(u) => RequestType::Session { session_uuid: u },
+                            None => RequestType::Single {
+                                ip_address,
+                                hostname,
+                                user_agent,
+                            },
+                        },
+                        status: res.status().as_u16(),
+                        response_time_ms: now
+                            .elapsed()
+                            .as_millis()
+                            .try_into()
+                            .expect("Failed to cast u128 to u32"),
+                        created_at,
+                        full_url,
+                    })
                 } else {
                     None
-                };
+                },
+                config,
+                client,
+            )
+            .await;
+            Ok(res)
+        };
 
-                let ext = SiteTraceExt::new(config.clone());
-                req.extensions_mut().insert(ext);
-
-                // TODO: write tests for ignore path feature
-                let should_trace_req =
-                    !config.ignore_paths.is_match(req.uri().path());
-                let full_url = get_full_url(&req);
-                let res: Response = inner.call(req).await?;
-
-                try_send_requests(
-                    if should_trace_req {
-                        Some(RequestData {
-                            path,
-                            method,
-                            request_type: match uuid_to_send {
-                                Some(u) => {
-                                    RequestType::Session { session_uuid: u }
-                                }
-                                None => RequestType::Single {
-                                    ip_address,
-                                    hostname,
-                                    user_agent,
-                                },
-                            },
-                            status: res.status().as_u16(),
-                            response_time_ms: now
-                                .elapsed()
-                                .as_millis()
-                                .try_into()
-                                .expect("Failed to cast u128 to u32"),
-                            created_at,
-                            full_url,
-                        })
-                    } else {
-                        None
-                    },
-                    config,
-                    client,
-                )
-                .await;
-                Ok(res)
-            }
-            .instrument(span),
-        )
+        // Skip span entering for ignored requests
+        if should_trace_req {
+            let span = tracing::info_span!("sitetrace call");
+            Box::pin(future.instrument(span))
+        } else {
+            Box::pin(future)
+        }
     }
 }
 
-async fn try_send_requests<ST: 'static>(
+pub(crate) async fn try_send_requests<ST: 'static>(
     request_data: Option<RequestData>,
     config: Config<ST>,
     client: reqwest::Client,

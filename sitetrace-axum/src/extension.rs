@@ -3,7 +3,9 @@ use axum_core::extract::FromRequestParts;
 use http::{request::Parts, StatusCode};
 use reqwest::Client;
 
-use crate::{api_calls, config::Config, impl_debug};
+use crate::{
+    api_calls, config::Config, impl_debug, middleware::try_send_requests,
+};
 
 pub type HitId = i32;
 pub type TargetId = i32;
@@ -29,7 +31,10 @@ pub struct SiteTraceExt<ST> {
     config: Config<ST>,
 }
 
-impl<ST> SiteTraceExt<ST> {
+impl<ST> SiteTraceExt<ST>
+where
+    ST: 'static + Clone,
+{
     pub(crate) fn new(config: Config<ST>) -> Self {
         SiteTraceExt {
             web_client: Client::new(),
@@ -54,12 +59,6 @@ impl<ST> SiteTraceExt<ST> {
     /// Run test request
     pub async fn run_test_req(&self) -> Result<(), SiteTraceError> {
         api_calls::test_request(&self.web_client).await
-    }
-
-    pub async fn try_send_requests_to_sitetrace(
-        &self,
-    ) -> Result<(), SiteTraceError> {
-        Ok(())
     }
 }
 
