@@ -583,6 +583,7 @@ async fn handle_session_get_uuid<ST: 'static>(
         // Create a new session
         if let Err(e) = create_session_request.validate() {
             tracing::error!("Failed to validate request data: {e}");
+            return None;
         }
         match create_session(&client, &config, &create_session_request).await {
             Ok(uuid) => {
@@ -625,6 +626,7 @@ fn build_sitetrace_timeout_cookie(
     let cookie_builder =
         tower_cookies::Cookie::build((SITETRACE_TIMEOUT_COOKIE, "1"))
             .http_only(true)
+            .path(config.path)
             .same_site(config.same_site)
             .expires(exp);
     cookie_builder.build()
