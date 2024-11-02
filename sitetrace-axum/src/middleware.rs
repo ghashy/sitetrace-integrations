@@ -502,11 +502,9 @@ where
 
             if uuid_to_send.is_some() {
                 let future = async {
-                    async_io::Timer::after(Duration::from_millis(100)).await;
-                    init_session_lock_ip_static()
-                        .lock()
-                        .await
-                        .remove(&ip_address.unwrap());
+                    async_io::Timer::after(Duration::from_millis(300)).await;
+                    let ip = ip_address.unwrap();
+                    init_session_lock_ip_static().lock().await.remove(&ip);
                     ExecOutput::Empty
                 };
                 (config.exec)(future.boxed());
