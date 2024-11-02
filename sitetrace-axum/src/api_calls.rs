@@ -1,13 +1,13 @@
 use std::future::Future;
 
-use futures::TryFutureExt;
+use futures::{FutureExt, TryFutureExt};
 use reqwest::Client;
 use secrecy::ExposeSecret;
 use url::Url;
 use uuid::Uuid;
 
 use crate::{
-    config::Config,
+    config::{Config, ExecOutput},
     extension::{HitId, TargetId},
     middleware::{CreateSessionRequest, RequestsPayload},
     SiteTraceError,
@@ -18,7 +18,7 @@ pub(crate) fn touch_session<'a, ST>(
     config: &Config<ST>,
     uuid: &Uuid,
     req: &CreateSessionRequest<'a>,
-) -> impl Future<Output = Result<reqwest::Response, reqwest::Error>> {
+) -> impl Future<Output = ExecOutput> {
     web_client
         .post(
             config
@@ -29,6 +29,7 @@ pub(crate) fn touch_session<'a, ST>(
         .bearer_auth(config.api_key.expose_secret())
         .json(req)
         .send()
+        .then(|r| async { ExecOutput::Response(r) })
 }
 
 pub(crate) async fn create_session<'a, ST>(
@@ -47,6 +48,7 @@ pub(crate) async fn create_session<'a, ST>(
         .json(req)
         .send()
         .await?
+        .error_for_status()?
         .text()
         .await?
         .parse()
@@ -86,12 +88,13 @@ pub(crate) fn post_requests<ST>(
     client: &Client,
     config: &Config<ST>,
     payload: RequestsPayload,
-) -> impl Future<Output = Result<reqwest::Response, reqwest::Error>> {
+) -> impl Future<Output = ExecOutput> {
     client
         .post(config.server_url.join("service-api/requests").unwrap())
         .bearer_auth(config.api_key.expose_secret())
         .json(&payload)
         .send()
+        .then(|r| async { ExecOutput::Response(r) })
 }
 
 pub(crate) async fn make_hit<ST>(

@@ -1,5 +1,6 @@
 pub use config::cookie::CookieConfig;
 pub use config::strategy::SendRequestStrategy;
+pub use config::ExecOutput;
 pub use extension::SiteTraceError;
 pub use extension::SiteTraceExt;
 pub use middleware::SiteTraceLayer;

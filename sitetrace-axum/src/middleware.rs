@@ -1,4 +1,6 @@
+use std::collections::HashSet;
 use std::task::{Context, Poll};
+use std::time::Duration;
 use std::{pin::Pin, sync::Arc};
 use std::{sync::OnceLock, time::Instant};
 
@@ -20,8 +22,8 @@ use tracing::Instrument;
 use url::Url;
 use uuid::Uuid;
 
-use crate::api_calls::{self, create_session, post_requests, touch_session};
-use crate::config::{get_full_url, Config};
+use crate::api_calls::{create_session, post_requests, touch_session};
+use crate::config::{get_full_url, Config, ExecOutput};
 use crate::extension::SiteTraceExt;
 use crate::utils::{HttpMethod, SITETRACE_TIMEOUT_COOKIE};
 use crate::{CookieConfig, SendRequestStrategy};
@@ -41,7 +43,7 @@ time::serde::format_description!(iso_format, OffsetDateTime, SIMPLE_ISO);
 #[derive(Debug, Clone, Serialize, Validate)]
 #[garde(allow_unvalidated)]
 pub(crate) struct CreateSessionRequest<'a> {
-    ip: &'a Option<String>,
+    ip: &'a str,
     #[garde(inner(length(max = 100)))]
     hostname: Option<String>,
     user_agent: &'a Option<String>,
@@ -92,6 +94,11 @@ pub fn requests_static() -> &'static Mutex<Vec<RequestData>> {
 pub fn last_posted_static() -> &'static Mutex<Instant> {
     static LAST: OnceLock<Mutex<Instant>> = OnceLock::new();
     LAST.get_or_init(|| Mutex::new(Instant::now()))
+}
+
+pub fn init_session_lock_ip_static() -> &'static Mutex<HashSet<String>> {
+    static REQUESTS: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
+    REQUESTS.get_or_init(|| Mutex::new(HashSet::new()))
 }
 
 /// Hint: to allow use cookies for SiteTrace service, just set any cookie for client.
@@ -183,19 +190,7 @@ impl<'a, ST> SiteTraceLayerBuilder<'a, ST> {
         fut: F,
     ) -> Result<SiteTraceLayer<ST>, regex::Error>
     where
-        F: Fn(
-                Pin<
-                    Box<
-                        dyn Future<
-                                Output = Result<
-                                    reqwest::Response,
-                                    reqwest::Error,
-                                >,
-                            > + Send
-                            + 'static,
-                    >,
-                >,
-            ) -> ()
+        F: Fn(Pin<Box<dyn Future<Output = ExecOutput> + Send + 'static>>) -> ()
             + Send
             + Sync
             + Clone
@@ -452,20 +447,21 @@ where
             };
 
             let cookie_allowed = !cookies.list().is_empty();
-            let uuid_to_send = if cookie_allowed {
-                handle_session_get_uuid(
-                    cookies,
-                    &config,
-                    app_state,
-                    &client,
-                    &ip_address,
-                    &hostname,
-                    &user_agent,
-                    headers,
-                )
-                .await
-            } else {
-                None
+            let uuid_to_send = match (cookie_allowed, &ip_address) {
+                (true, Some(ip)) => {
+                    handle_session_get_uuid(
+                        cookies,
+                        &config,
+                        app_state,
+                        &client,
+                        ip,
+                        &hostname,
+                        &user_agent,
+                        headers,
+                    )
+                    .await
+                }
+                _ => None,
             };
 
             let ext = SiteTraceExt::new(config.clone());
@@ -482,7 +478,7 @@ where
                         request_type: match uuid_to_send {
                             Some(u) => RequestType::Session { session_uuid: u },
                             None => RequestType::Single {
-                                ip_address,
+                                ip_address: ip_address.clone(),
                                 hostname,
                                 user_agent,
                             },
@@ -499,10 +495,22 @@ where
                 } else {
                     None
                 },
-                config,
+                config.clone(),
                 client,
             )
             .await;
+
+            if uuid_to_send.is_some() {
+                let future = async {
+                    async_io::Timer::after(Duration::from_millis(100)).await;
+                    init_session_lock_ip_static()
+                        .lock()
+                        .await
+                        .remove(&ip_address.unwrap());
+                    ExecOutput::Empty
+                };
+                (config.exec)(future.boxed());
+            }
             Ok(res)
         };
 
@@ -550,7 +558,7 @@ async fn handle_session_get_uuid<ST: 'static>(
     config: &Config<ST>,
     app_state: Option<ST>,
     client: &reqwest::Client,
-    ip_address: &Option<String>,
+    ip_address: &str,
     hostname: &Option<String>,
     user_agent: &Option<String>,
     headers: HeaderMap,
@@ -560,6 +568,16 @@ async fn handle_session_get_uuid<ST: 'static>(
     } else {
         None
     };
+
+    // Protect from many parallel session-init requests
+    let locked_already = !init_session_lock_ip_static()
+        .lock()
+        .await
+        .insert(ip_address.to_string());
+    if locked_already {
+        return None;
+    }
+
     let create_session_request = CreateSessionRequest {
         ip: ip_address,
         hostname: hostname.clone(),

@@ -16,6 +16,11 @@ pub(crate) mod strategy;
 
 type Closure<T> = dyn for<'a> Fn(&Request<Body>) -> T + Send + Sync;
 
+pub enum ExecOutput {
+    Response(Result<reqwest::Response, reqwest::Error>),
+    Empty,
+}
+
 #[derive(Clone)]
 pub struct Config<ST> {
     pub(super) api_key: SecretString,
@@ -33,18 +38,8 @@ pub struct Config<ST> {
                 + Sync,
         >,
     >,
-    pub(super) exec: Arc<
-        Box<
-            dyn Fn(
-                    BoxFuture<
-                        'static,
-                        Result<reqwest::Response, reqwest::Error>,
-                    >,
-                ) -> ()
-                + Send
-                + Sync,
-        >,
-    >,
+    pub(super) exec:
+        Arc<Box<dyn Fn(BoxFuture<'static, ExecOutput>) -> () + Send + Sync>>,
     pub(super) cookie_config: CookieConfig<'static>,
 }
 

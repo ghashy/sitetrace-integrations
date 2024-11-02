@@ -1,6 +1,8 @@
 use axum::{extract::FromRequestParts, routing, Router};
 
-use sitetrace_axum::{SiteTraceExt, SiteTraceLayer, SiteTraceLayerBuilder};
+use sitetrace_axum::{
+    ExecOutput, SiteTraceExt, SiteTraceLayer, SiteTraceLayerBuilder,
+};
 
 use helpers::{shutdown_signal, App};
 use time::Duration;
@@ -19,14 +21,15 @@ async fn testme() {
             .build_with_exec(|fut| {
                 tokio::spawn(async move {
                     match fut.await {
-                        Ok(r) => {
+                        ExecOutput::Response(Ok(r)) => {
                             dbg!(r);
                         }
-                        Err(e) => {
+                        ExecOutput::Response(Err(e)) => {
                             tracing::error!(
                                 "Failed to send request to sitetrace: {e}"
                             );
                         }
+                        ExecOutput::Empty => (),
                     }
                 });
             })
