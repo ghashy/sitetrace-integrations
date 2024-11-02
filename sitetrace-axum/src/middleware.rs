@@ -567,15 +567,6 @@ async fn handle_session_get_uuid<ST: 'static>(
         None
     };
 
-    // Protect from many parallel session-init requests
-    let locked_already = !init_session_lock_ip_static()
-        .lock()
-        .await
-        .insert(ip_address.to_string());
-    if locked_already {
-        return None;
-    }
-
     let create_session_request = CreateSessionRequest {
         ip: ip_address,
         hostname: hostname.clone(),
@@ -596,6 +587,15 @@ async fn handle_session_get_uuid<ST: 'static>(
         }
         Some(uuid)
     } else {
+        // Protect from many parallel session-init requests
+        let locked_already = !init_session_lock_ip_static()
+            .lock()
+            .await
+            .insert(ip_address.to_string());
+        if locked_already {
+            return None;
+        }
+
         // Create a new session
         if let Err(e) = create_session_request.validate() {
             tracing::error!("Failed to validate request data: {e}");
