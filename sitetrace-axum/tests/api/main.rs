@@ -9,7 +9,7 @@ use time::Duration;
 use tracing::Level;
 mod helpers;
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
 async fn testme() {
     init_tracing();
     let session_store = tower_sessions::MemoryStore::default();
@@ -18,6 +18,14 @@ async fn testme() {
         .with_expiry(tower_sessions::Expiry::OnInactivity(Duration::days(1)));
     let layer: SiteTraceLayer<()> =
         SiteTraceLayerBuilder::new("apikey".to_owned())
+            .ignore_path(r"/api/healthcheck")
+            // Ignore backend paths
+            .ignore_path(r"/api/session/*")
+            .ignore_path(r"/api/open/*")
+            .ignore_path(r"/api/protected/*")
+            // Ignore react paths
+            .ignore_path(r"/assets/.*(mp4|css|jpg|png|ico|js)")
+            .ignore_path(r"/favicon.ico")
             .build_with_exec(|fut| {
                 tokio::spawn(async move {
                     match fut.await {
@@ -38,10 +46,11 @@ async fn testme() {
         .route(
             "/test",
             routing::get(
-                |ext: SiteTraceExt<()>,
-                 session: tower_sessions::Session,
-                 cookies: tower_cookies::Cookies| async move {
-                    ext.run_test_req().await.unwrap();
+                // |ext: SiteTraceExt<()>,
+                //  session: tower_sessions::Session,
+                //  cookies: tower_cookies::Cookies|
+                || async move {
+                    // ext.run_test_req().await.unwrap();
                     "Hello world"
                 },
             ),

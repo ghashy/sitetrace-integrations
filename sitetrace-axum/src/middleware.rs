@@ -464,7 +464,7 @@ where
                 _ => None,
             };
 
-            let ext = SiteTraceExt::new(config.clone());
+            let ext = SiteTraceExt::new(config.clone(), client.clone());
             req.extensions_mut().insert(ext);
 
             let full_url = get_full_url(&req);

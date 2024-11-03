@@ -35,11 +35,8 @@ impl<ST> SiteTraceExt<ST>
 where
     ST: 'static + Clone,
 {
-    pub(crate) fn new(config: Config<ST>) -> Self {
-        SiteTraceExt {
-            web_client: Client::new(),
-            config,
-        }
+    pub(crate) fn new(config: Config<ST>, web_client: Client) -> Self {
+        SiteTraceExt { web_client, config }
     }
 
     /// It is highly recommended to call the method within a background
