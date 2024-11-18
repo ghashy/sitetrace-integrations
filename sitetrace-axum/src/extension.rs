@@ -3,9 +3,7 @@ use axum_core::extract::FromRequestParts;
 use http::{request::Parts, StatusCode};
 use reqwest::Client;
 
-use crate::{
-    api_calls, config::Config, impl_debug, middleware::try_send_requests,
-};
+use crate::{api_calls, config::Config, impl_debug};
 
 pub type HitId = i32;
 pub type TargetId = i32;

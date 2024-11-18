@@ -37,6 +37,7 @@ tracing-subscriber = { version = "0.3.18", features = [
   "registry",
   "env-filter",
 ] }
+rand = "0.8.5"
 
 [dev-dependencies]
 tower-sessions = "0.13.0"

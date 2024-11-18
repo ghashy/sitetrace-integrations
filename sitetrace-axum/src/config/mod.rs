@@ -27,7 +27,7 @@ pub struct Config<ST> {
     pub(super) send_strategy: SendRequestStrategy,
     pub(super) ignore_paths: regex::RegexSet,
     pub(super) server_url: Url,
-    pub(super) get_hostname: Arc<Closure<Option<String>>>,
+    pub(super) get_hostname: Arc<Closure<String>>,
     pub(super) get_ip_address: Arc<Closure<Option<String>>>,
     pub(super) get_path: Arc<Closure<String>>,
     pub(super) get_user_agent: Arc<Closure<Option<String>>>,
@@ -65,10 +65,12 @@ impl<ST> Default for Config<ST> {
     }
 }
 
-fn get_hostname(req: &Request<Body>) -> Option<String> {
+// Returns false if host auto-generated
+fn get_hostname(req: &Request<Body>) -> String {
     req.headers()
         .get(HOST)
         .and_then(|h| h.to_str().ok().map(|s| s.to_owned()))
+        .unwrap_or_default()
 }
 
 fn get_ip_address(req: &Request<Body>) -> Option<String> {
@@ -118,7 +120,8 @@ fn get_user_agent(req: &Request<Body>) -> Option<String> {
 }
 
 pub(crate) fn get_full_url(req: &Request<Body>) -> Option<String> {
-    let Some(host) = get_hostname(&req) else {
+    let host = get_hostname(&req);
+    if host.is_empty() {
         return None;
     };
 
@@ -139,4 +142,17 @@ pub(crate) fn get_full_url(req: &Request<Body>) -> Option<String> {
             .unwrap_or_default()
     );
     Some(full_url)
+}
+
+pub(crate) fn generate_hostname() -> String {
+    let mut rng = rand::thread_rng();
+    format!(
+        "host_{}",
+        std::iter::repeat_with(|| {
+            rand::Rng::sample(&mut rng, rand::distributions::Alphanumeric)
+        })
+        .map(|b| char::from(b).to_lowercase().next().unwrap())
+        .take(5)
+        .collect::<String>()
+    )
 }

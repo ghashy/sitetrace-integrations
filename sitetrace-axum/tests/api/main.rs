@@ -1,8 +1,6 @@
-use axum::{extract::FromRequestParts, routing, Router};
+use axum::{routing, Router};
 
-use sitetrace_axum::{
-    ExecOutput, SiteTraceExt, SiteTraceLayer, SiteTraceLayerBuilder,
-};
+use sitetrace_axum::{ExecOutput, SiteTraceLayer, SiteTraceLayerBuilder};
 
 use helpers::{shutdown_signal, App};
 use time::Duration;

@@ -44,8 +44,8 @@ time::serde::format_description!(iso_format, OffsetDateTime, SIMPLE_ISO);
 #[garde(allow_unvalidated)]
 pub(crate) struct CreateSessionRequest<'a> {
     ip: &'a str,
-    #[garde(inner(length(max = 100)))]
-    hostname: Option<String>,
+    #[garde(length(max = 100))]
+    hostname: String,
     user_agent: &'a Option<String>,
     #[garde(inner(length(max = 100)))]
     user_id: Option<String>,
@@ -59,8 +59,8 @@ pub(crate) enum RequestType {
     },
     Single {
         ip_address: Option<String>,
-        #[garde(inner(length(max = 100)))]
-        hostname: Option<String>,
+        #[garde(length(max = 100))]
+        hostname: String,
         user_agent: Option<String>,
     },
 }
@@ -252,7 +252,7 @@ impl<'a, ST> SiteTraceLayerBuilder<'a, ST> {
     ///   hostname as a `String`. This closure should implement the `Send`, `Sync`, and `'static` traits.
     pub fn with_hostname_mapper<F>(mut self, mapper: F) -> Self
     where
-        F: Fn(&Request<Body>) -> Option<String> + Send + Sync + 'static,
+        F: Fn(&Request<Body>) -> String + Send + Sync + 'static,
     {
         self.config.get_hostname = Arc::new(mapper);
         self
@@ -425,7 +425,10 @@ where
 
         let client = self.web_client.clone();
         let config = self.config.clone();
-        let hostname = (self.config.get_hostname)(&req);
+        let mut hostname = (self.config.get_hostname)(&req);
+        if hostname.is_empty() {
+            hostname = crate::config::generate_hostname();
+        }
         let ip_address = (self.config.get_ip_address)(&req);
         let path = (self.config.get_path)(&req);
         let method = req.method().into();
@@ -557,7 +560,7 @@ async fn handle_session_get_uuid<ST: 'static>(
     app_state: Option<ST>,
     client: &reqwest::Client,
     ip_address: &str,
-    hostname: &Option<String>,
+    hostname: &str,
     user_agent: &Option<String>,
     headers: HeaderMap,
 ) -> Option<Uuid> {
@@ -569,7 +572,7 @@ async fn handle_session_get_uuid<ST: 'static>(
 
     let create_session_request = CreateSessionRequest {
         ip: ip_address,
-        hostname: hostname.clone(),
+        hostname: hostname.to_owned(),
         user_agent: &user_agent,
         user_id,
     };
