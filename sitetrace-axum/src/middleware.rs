@@ -28,17 +28,21 @@ use crate::extension::SiteTraceExt;
 use crate::utils::{HttpMethod, SITETRACE_TIMEOUT_COOKIE};
 use crate::{CookieConfig, SendRequestStrategy};
 
-const SIMPLE_ISO: Iso8601<6651332276402088934156738804825718784> = Iso8601::<
-    {
-        iso8601::Config::DEFAULT
-            .set_year_is_six_digits(false)
-            .set_time_precision(TimePrecision::Second {
-                decimal_digits: None,
-            })
-            .encode()
-    },
->;
-time::serde::format_description!(iso_format, OffsetDateTime, SIMPLE_ISO);
+#[allow(dead_code)]
+pub const ACCURATE_ISO: Iso8601<6651332276409342489074426579873955840> =
+    Iso8601::<
+        {
+            iso8601::Config::DEFAULT
+                .set_year_is_six_digits(false)
+                .set_time_precision(TimePrecision::Second {
+                    decimal_digits: Some(
+                        std::num::NonZero::<u8>::new(6).unwrap(),
+                    ),
+                })
+                .encode()
+        },
+    >;
+time::serde::format_description!(iso_format, OffsetDateTime, ACCURATE_ISO);
 
 #[derive(Debug, Clone, Serialize, Validate)]
 #[garde(allow_unvalidated)]
