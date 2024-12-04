@@ -38,12 +38,7 @@ pub(crate) async fn create_session<'a, ST>(
     req: &CreateSessionRequest<'a>,
 ) -> Result<Uuid, reqwest::Error> {
     let uuid = web_client
-        .post(
-            config
-                .server_url
-                .join("/service-api/session/create")
-                .unwrap(),
-        )
+        .post(config.server_url.join("/service-api/session").unwrap())
         .bearer_auth(config.api_key.expose_secret())
         .json(req)
         .send()
@@ -59,10 +54,12 @@ pub(crate) async fn create_session<'a, ST>(
 pub(crate) async fn get_sessions_count<ST>(
     web_client: &Client,
     config: &Config<ST>,
+    host: &str,
 ) -> Result<i64, SiteTraceError> {
     let url = config.server_url.join("service-api/session/count").unwrap();
     let count = web_client
         .get(url)
+        .query(&["host", host])
         .bearer_auth(config.api_key.expose_secret())
         .send()
         .await

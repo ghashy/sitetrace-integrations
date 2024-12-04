@@ -47,8 +47,12 @@ where
     }
 
     /// Returns count of active sessions
-    pub async fn get_sessions_count(&self) -> Result<i64, SiteTraceError> {
-        api_calls::get_sessions_count(&self.web_client, &self.config).await
+    pub async fn get_sessions_count(
+        &self,
+        host: &str,
+    ) -> Result<i64, SiteTraceError> {
+        api_calls::get_sessions_count(&self.web_client, &self.config, host)
+            .await
     }
 
     /// Run test request
