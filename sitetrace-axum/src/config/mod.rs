@@ -65,12 +65,11 @@ impl<ST> Default for Config<ST> {
     }
 }
 
-// Returns false if host auto-generated
 fn get_hostname(req: &Request<Body>) -> String {
     req.headers()
         .get(HOST)
         .and_then(|h| h.to_str().ok().map(|s| s.to_owned()))
-        .unwrap_or_default()
+        .unwrap_or("unknown_host".to_string())
 }
 
 fn get_ip_address(req: &Request<Body>) -> Option<String> {
@@ -142,17 +141,4 @@ pub(crate) fn get_full_url(req: &Request<Body>) -> Option<String> {
             .unwrap_or_default()
     );
     Some(full_url)
-}
-
-pub(crate) fn generate_hostname() -> String {
-    let mut rng = rand::thread_rng();
-    format!(
-        "host_{}",
-        std::iter::repeat_with(|| {
-            rand::Rng::sample(&mut rng, rand::distributions::Alphanumeric)
-        })
-        .map(|b| char::from(b).to_lowercase().next().unwrap())
-        .take(5)
-        .collect::<String>()
-    )
 }

@@ -427,12 +427,11 @@ where
         let clone = self.inner.clone();
         let mut inner = std::mem::replace(&mut self.inner, clone);
 
+        // Helpers
         let client = self.web_client.clone();
         let config = self.config.clone();
-        let mut hostname = (self.config.get_hostname)(&req);
-        if hostname.is_empty() {
-            hostname = crate::config::generate_hostname();
-        }
+        // Metadata
+        let hostname = (self.config.get_hostname)(&req);
         let ip_address = (self.config.get_ip_address)(&req);
         let path = (self.config.get_path)(&req);
         let method = req.method().into();
