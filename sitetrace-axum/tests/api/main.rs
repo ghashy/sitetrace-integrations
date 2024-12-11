@@ -15,7 +15,7 @@ async fn testme() {
         .with_secure(true)
         .with_expiry(tower_sessions::Expiry::OnInactivity(Duration::days(1)));
     let layer: SiteTraceLayer<()> =
-        SiteTraceLayerBuilder::new("apikey".to_owned())
+        SiteTraceLayerBuilder::new("12xQnHn7o26akndQbitF3i3iy2Taav".to_owned())
             .ignore_path(r"/api/healthcheck")
             // Ignore backend paths
             .ignore_path(r"/api/session/*")
@@ -24,15 +24,26 @@ async fn testme() {
             // Ignore react paths
             .ignore_path(r"/assets/.*(mp4|css|jpg|png|ico|js)")
             .ignore_path(r"/favicon.ico")
+            .with_server_url("http://localhost:8000")
+            .unwrap()
+            .with_send_request_strategy(
+                sitetrace_axum::SendRequestStrategy::RequestCountExceed(1),
+            )
             .build_with_exec(|fut| {
                 tokio::spawn(async move {
                     match fut.await {
                         ExecOutput::Response(Ok(r)) => {
-                            dbg!(r);
+                            let status = r.status();
+                            let text = r.text().await.unwrap_or_default();
+                            println!(
+                                "Sitetrace response status: {}, body: {}",
+                                status, text
+                            );
                         }
                         ExecOutput::Response(Err(e)) => {
                             tracing::error!(
-                                "Failed to send request to sitetrace: {e}"
+                                "Failed to send request to sitetrace: {:#?}",
+                                e
                             );
                         }
                         ExecOutput::Empty => (),

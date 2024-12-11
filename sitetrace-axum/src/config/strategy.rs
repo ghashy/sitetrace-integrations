@@ -4,7 +4,7 @@ pub enum SendRequestStrategy {
     TimeInterval(u64),
     /// Send requests when their cached count exceeds `u32`.
     RequestCountExceed(usize),
-    /// Send requests when one of (time_interval, count)
+    /// Send requests when one of (time_interval_sec, count)
     /// condition is true.
     Both(u64, usize),
 }

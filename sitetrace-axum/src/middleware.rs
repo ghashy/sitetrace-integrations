@@ -47,6 +47,8 @@ time::serde::format_description!(iso_format, OffsetDateTime, ACCURATE_ISO);
 #[derive(Debug, Clone, Serialize, Validate)]
 #[garde(allow_unvalidated)]
 pub(crate) struct CreateSessionRequest<'a> {
+    #[serde(with = "iso_format")]
+    started_at: OffsetDateTime,
     ip: &'a str,
     #[garde(length(max = 100))]
     hostname: String,
@@ -57,31 +59,38 @@ pub(crate) struct CreateSessionRequest<'a> {
 
 #[derive(Debug, Clone, Serialize, Validate)]
 #[garde(allow_unvalidated)]
-pub(crate) enum RequestType {
-    Session {
-        session_uuid: Uuid,
-    },
-    Single {
-        ip_address: Option<String>,
-        #[garde(length(max = 100))]
-        hostname: String,
-        user_agent: Option<String>,
-    },
-}
-
-#[derive(Debug, Clone, Serialize, Validate)]
-#[garde(allow_unvalidated)]
 pub(crate) struct RequestData {
     #[serde(with = "iso_format")]
     created_at: OffsetDateTime,
     path: String,
     method: HttpMethod,
-    response_time_ms: u32,
+    /// In microseconds
+    response_time_us: u32,
     status: u16,
     #[garde(inner(length(max = 1000)))]
     full_url: Option<String>,
-    #[garde(dive)]
-    request_type: RequestType,
+
+    #[garde(custom(req_data_valid(self.ip_address.as_ref(), self.user_agent.as_ref())))]
+    session_uuid: Option<Uuid>,
+    ip_address: Option<String>,
+    #[garde(length(max = 100))]
+    hostname: String,
+    user_agent: Option<String>,
+}
+
+/// If `session_uuid` present, `ip` and `user_agent` should be omitted.
+fn req_data_valid<'a>(
+    ip: Option<&'a String>,
+    ua: Option<&'a String>,
+) -> impl FnOnce(&Option<Uuid>, &()) -> garde::Result + 'a {
+    move |s_uuid, _| {
+        if s_uuid.is_some() && (ip.is_some() || ua.is_some()) {
+            return Err(garde::Error::new(format!(
+                "Session uuid excludes ip & user_agent fileds!"
+            )));
+        }
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Validate)]
@@ -476,27 +485,20 @@ where
             let full_url = get_full_url(&req);
             let res: Response = inner.call(req).await?;
 
+            #[rustfmt::skip]
             try_send_requests(
                 if should_trace_req {
                     Some(RequestData {
                         path,
                         method,
-                        request_type: match uuid_to_send {
-                            Some(u) => RequestType::Session { session_uuid: u },
-                            None => RequestType::Single {
-                                ip_address: ip_address.clone(),
-                                hostname,
-                                user_agent,
-                            },
-                        },
                         status: res.status().as_u16(),
-                        response_time_ms: now
-                            .elapsed()
-                            .as_millis()
-                            .try_into()
-                            .expect("Failed to cast u128 to u32"),
+                        response_time_us: now .elapsed().as_micros().try_into().expect("Failed to cast u128 to u32"),
                         created_at,
                         full_url,
+                        session_uuid: uuid_to_send,
+                        ip_address: if uuid_to_send.is_none() {ip_address.clone()} else {None},
+                        hostname,
+                        user_agent: if uuid_to_send.is_none() {user_agent} else {None},
                     })
                 } else {
                     None
@@ -578,6 +580,7 @@ async fn handle_session_get_uuid<ST: 'static>(
         hostname: hostname.to_owned(),
         user_agent: &user_agent,
         user_id,
+        started_at: OffsetDateTime::now_utc(),
     };
     if let Some(c) = cookies.get(&config.cookie_config.name) {
         // Prolong existing session
@@ -625,7 +628,7 @@ async fn handle_session_get_uuid<ST: 'static>(
 fn build_sitetrace_cookie(
     config: CookieConfig<'static>,
     uuid: Uuid,
-) -> tower_cookies::Cookie {
+) -> tower_cookies::Cookie<'static> {
     let exp = config.expiry_date();
     let mut cookie_builder =
         tower_cookies::Cookie::build((config.name, uuid.to_string()))
@@ -643,7 +646,7 @@ fn build_sitetrace_cookie(
 
 fn build_sitetrace_timeout_cookie(
     config: CookieConfig<'static>,
-) -> tower_cookies::Cookie {
+) -> tower_cookies::Cookie<'static> {
     let exp = OffsetDateTime::now_utc().saturating_add(7.seconds());
     let cookie_builder =
         tower_cookies::Cookie::build((SITETRACE_TIMEOUT_COOKIE, "1"))
