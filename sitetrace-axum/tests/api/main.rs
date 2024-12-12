@@ -35,9 +35,10 @@ async fn testme() {
                         ExecOutput::Response(Ok(r)) => {
                             let status = r.status();
                             let text = r.text().await.unwrap_or_default();
-                            println!(
+                            tracing::error!(
                                 "Sitetrace response status: {}, body: {}",
-                                status, text
+                                status,
+                                text
                             );
                         }
                         ExecOutput::Response(Err(e)) => {

@@ -46,7 +46,7 @@ time::serde::format_description!(iso_format, OffsetDateTime, ACCURATE_ISO);
 
 #[derive(Debug, Clone, Serialize, Validate)]
 #[garde(allow_unvalidated)]
-pub(crate) struct CreateSessionRequest<'a> {
+pub(crate) struct SessionData<'a> {
     #[serde(with = "iso_format")]
     started_at: OffsetDateTime,
     ip: &'a str,
@@ -575,7 +575,7 @@ async fn handle_session_get_uuid<ST: 'static>(
         None
     };
 
-    let create_session_request = CreateSessionRequest {
+    let create_session_request = SessionData {
         ip: ip_address,
         hostname: hostname.to_owned(),
         user_agent: &user_agent,

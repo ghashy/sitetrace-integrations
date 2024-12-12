@@ -9,7 +9,7 @@ use uuid::Uuid;
 use crate::{
     config::{Config, ExecOutput},
     extension::{HitId, TargetId},
-    middleware::{CreateSessionRequest, RequestsPayload},
+    middleware::{RequestsPayload, SessionData},
     SiteTraceError,
 };
 
@@ -17,7 +17,7 @@ pub(crate) fn touch_session<'a, ST>(
     web_client: &Client,
     config: &Config<ST>,
     uuid: &Uuid,
-    req: &CreateSessionRequest<'a>,
+    req: &SessionData<'a>,
 ) -> impl Future<Output = ExecOutput> {
     web_client
         .post(
@@ -35,7 +35,7 @@ pub(crate) fn touch_session<'a, ST>(
 pub(crate) async fn create_session<'a, ST>(
     web_client: &Client,
     config: &Config<ST>,
-    req: &CreateSessionRequest<'a>,
+    req: &SessionData<'a>,
 ) -> Result<Uuid, reqwest::Error> {
     let uuid = web_client
         .post(config.server_url.join("/service-api/session").unwrap())
