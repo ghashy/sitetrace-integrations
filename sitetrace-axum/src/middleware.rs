@@ -448,7 +448,6 @@ where
         let app_state = self.app_state.clone();
         let headers = req.headers().clone();
 
-        // TODO: write tests for ignore path feature
         let should_trace_req = !config.ignore_paths.is_match(req.uri().path());
 
         let future = async move {
@@ -655,4 +654,38 @@ fn build_sitetrace_timeout_cookie(
             .same_site(config.same_site)
             .expires(exp);
     cookie_builder.build()
+}
+
+#[cfg(test)]
+mod test {
+    use regex::RegexSet;
+
+    #[test]
+    fn ignore_paths_success() {
+        let paths = vec![
+            r"/api/healthcheck",
+            r"/api/session/*",
+            r"/api/open/*",
+            r"/api/protected/*",
+            r"/assets/.*(mp4|css|jpg|png|ico|js|otf)",
+            r".*.php",
+            r".*(wordpress|wp-admin).*",
+            r"/favicon.ico",
+        ];
+        let regex_set = RegexSet::new(paths).expect("Filed to build regex set");
+
+        for path in vec![
+            r"/api/healthcheck",
+            r"/api/session/9b07c3b4-8f64-4e0c-bd5b-232bb7f6f41a/create",
+            r"/api/open/some/route",
+            r"/api/protected/some/route",
+            r"/assets/videofile.mp4",
+            r"/wordpress/wp-admin/setup-config.php",
+            r"/wordpress/wp-admin/setup-config.config",
+            r"/wp-admin/setup-config.config",
+            r"/favicon.ico",
+        ] {
+            assert!(regex_set.is_match(path));
+        }
+    }
 }
