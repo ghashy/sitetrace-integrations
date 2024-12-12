@@ -86,6 +86,7 @@ pub(crate) fn post_requests<ST>(
     config: &Config<ST>,
     payload: RequestsPayload,
 ) -> impl Future<Output = ExecOutput> {
+    dbg!(&payload);
     client
         .post(config.server_url.join("service-api/requests").unwrap())
         .bearer_auth(config.api_key.expose_secret())
