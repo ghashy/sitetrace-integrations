@@ -23,7 +23,7 @@ pub(crate) fn touch_session<'a, ST>(
         .post(
             config
                 .server_url
-                .join(&format!("/service-api/session/{}/touch", uuid))
+                .join(&format!("/api/v1/service/session/{}/touch", uuid))
                 .unwrap(),
         )
         .bearer_auth(config.api_key.expose_secret())
@@ -38,7 +38,7 @@ pub(crate) async fn create_session<'a, ST>(
     req: &SessionData<'a>,
 ) -> Result<Uuid, reqwest::Error> {
     let uuid = web_client
-        .post(config.server_url.join("/service-api/session").unwrap())
+        .post(config.server_url.join("/api/v1/service/session").unwrap())
         .bearer_auth(config.api_key.expose_secret())
         .json(req)
         .send()
@@ -56,7 +56,10 @@ pub(crate) async fn get_sessions_count<ST>(
     config: &Config<ST>,
     host: &str,
 ) -> Result<i64, SiteTraceError> {
-    let url = config.server_url.join("service-api/session/count").unwrap();
+    let url = config
+        .server_url
+        .join("/api/v1/service/session/count")
+        .unwrap();
     let count = web_client
         .get(url)
         .query(&["host", host])
@@ -87,7 +90,7 @@ pub(crate) fn post_requests<ST>(
     payload: RequestsPayload,
 ) -> impl Future<Output = ExecOutput> {
     client
-        .post(config.server_url.join("service-api/requests").unwrap())
+        .post(config.server_url.join("/api/v1/service/requests").unwrap())
         .bearer_auth(config.api_key.expose_secret())
         .json(&payload)
         .send()
@@ -103,7 +106,7 @@ pub(crate) async fn make_hit<ST>(
         .post(
             config
                 .server_url
-                .join(&format!("service-api/target/{}/hit", target_id))
+                .join(&format!("/api/v1/service/target/{}/hit", target_id))
                 .unwrap(),
         )
         .bearer_auth(config.api_key.expose_secret())
